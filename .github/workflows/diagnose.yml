@@ -1,0 +1,47 @@
+name: Diagnose ESPN Secrets
+on:
+  workflow_dispatch: {}
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Show secret lengths (still masked)
+        env:
+          LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
+          SEASON_ID: ${{ secrets.SEASON_ID }}
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          SWID: ${{ secrets.SWID }}
+        run: |
+          pyver=$(python -c 'import sys; print(sys.version)')
+          echo "Python: $pyver"
+          echo "LEAGUE_ID length: ${#LEAGUE_ID}"
+          echo "SEASON_ID: $SEASON_ID"
+          echo "ESPN_S2 length: ${#ESPN_S2}"
+          echo "SWID length: ${#SWID}"
+          if [[ "$SWID" =~ ^\{[0-9A-Fa-f-]{36}\}$ ]]; then echo "SWID pattern: OK"; else echo "SWID pattern: MISMATCH"; fi
+      - name: Install deps
+        run: pip install espn-api==0.26.0
+      - name: Raw HTTP sanity (status code only)
+        env:
+          LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
+          SEASON_ID: ${{ secrets.SEASON_ID }}
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          SWID: ${{ secrets.SWID }}
+        run: |
+          python - << 'PY'
+          import os, requests
+          year  = os.environ["SEASON_ID"]
+          lid   = os.environ["LEAGUE_ID"]
+          s2    = os.environ["ESPN_S2"]
+          swid  = os.environ["SWID"]
+          url = f"https://fantasy.espn.com/apis/v3/games/ffl/seasons/{year}/segments/0/leagues/{lid}"
+          r = requests.get(url, cookies={"SWID": swid, "espn_s2": s2}, headers={"x-fantasy-source":"kona"})
+          print("GET", url, "->", r.status_code)
+          # Print a tiny snippet to confirm it's JSON if 200:
+          if r.status_code == 200:
+              print("OK, first 120 bytes:", r.text[:120])
+          PY
