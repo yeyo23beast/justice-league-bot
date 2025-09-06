@@ -5,19 +5,15 @@ WEBHOOK_URL = os.environ["WEBHOOK_URL"]
 TZ = os.environ.get("TIMEZONE", "America/Denver")
 
 def send(embed):
-    requests.post(
-        WEBHOOK_URL,
-        json={"username": "Justice League Bot", "embeds": [embed]},
-        timeout=20
-    ).raise_for_status()
+    requests.post(WEBHOOK_URL, json={"username":"Justice League Bot","embeds":[embed]}, timeout=20).raise_for_status()
 
 def current_week():
-    data = get("mSettings")  # carries current matchup period
+    data = get("mSettings")
     return data["status"]["currentMatchupPeriod"]
 
 def build_preview():
     week = current_week()
-    data = get("mMatchup")   # schedule + teams
+    data = get("mMatchup")
     schedule = [s for s in data.get("schedule", []) if s.get("matchupPeriodId") == week]
     teams = {t["id"]: t for t in data["teams"]}
 
