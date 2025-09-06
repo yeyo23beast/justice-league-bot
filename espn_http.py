@@ -14,7 +14,6 @@ def _ctx():
             "X-Fantasy-Platform": "kona",
             "X-Fantasy-Source": "kona",
         },
-        # Try the READS host first (this is the one that returned JSON 200 in your logs)
         "bases": [
             f"https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/seasons/{year}/segments/0/leagues/{lid}",
             f"https://fantasy.espn.com/apis/v3/games/ffl/seasons/{year}/segments/0/leagues/{lid}",
