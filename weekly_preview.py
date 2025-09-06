@@ -1,3 +1,17 @@
+import os, requests, datetime, pytz
+from espn_http import get
+from team_utils import team_display
+
+WEBHOOK_URL = os.environ["WEBHOOK_URL"]
+TZ = os.environ.get("TIMEZONE", "America/Denver")
+
+def send(embed):
+    requests.post(WEBHOOK_URL, json={"username":"Justice League Bot","embeds":[embed]}, timeout=20).raise_for_status()
+
+def current_week():
+    data = get("mSettings")
+    return data["status"]["currentMatchupPeriod"]
+
 def build_preview():
     week = current_week()
     # Pull schedule from mMatchup
