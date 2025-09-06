@@ -1,9 +1,8 @@
 name: Weekly Fantasy Posts
-
 on:
   schedule:
-    - cron: "0 16 * * 2"   # Tue 10:00 MDT: Awards + Recap + Power
-    - cron: "0 22 * * 4"   # Thu 16:00 MDT: Previews
+    - cron: "0 16 * * 2"   # Tue 10:00 MDT — Awards + Power
+    - cron: "0 22 * * 4"   # Thu  4:00 MDT — Preview
   workflow_dispatch: {}
 
 jobs:
@@ -14,17 +13,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: python debug_league.py #pip install -r requirements.txt
-      - name: Debug League Connection
-        env:
-          LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
-          SEASON_ID: ${{ secrets.SEASON_ID }}
-          ESPN_S2: ${{ secrets.ESPN_S2 }}
-          SWID: ${{ secrets.SWID }}
-        run: python debug_league.py
+      - run: pip install -r requirements.txt
 
-      # Decide what to run based on the cron that triggered this run:
-      - name: Post Awards + Recap + Power (Tue)
+      - name: Tuesday (Awards + Power)
         if: ${{ github.event.schedule == '0 16 * * 2' || github.event_name == 'workflow_dispatch' }}
         env:
           LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
@@ -37,8 +28,8 @@ jobs:
           python weekly_awards.py
           python weekly_power.py
 
-      - name: Post Preview (Thu)
-        if: ${{ github.event.schedule == '0 22 * * 4' || github.event_name == 'workflow_dispatch' }}
+      - name: Thursday (Preview)
+        if: ${{ github.event.schedule == '0 22 * * 4' }}
         env:
           LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
           SEASON_ID: ${{ secrets.SEASON_ID }}
