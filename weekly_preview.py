@@ -1,22 +1,21 @@
-import os, requests, datetime, pytz
-from espn_http import get
-from team_utils import team_display
-
-WEBHOOK_URL = os.environ["WEBHOOK_URL"]
-TZ = os.environ.get("TIMEZONE", "America/Denver")
-
-def send(embed):
-    requests.post(WEBHOOK_URL, json={"username":"Justice League Bot","embeds":[embed]}, timeout=20).raise_for_status()
-
-def current_week():
-    data = get("mSettings")
-    return data["status"]["currentMatchupPeriod"]
-
 def build_preview():
     week = current_week()
-    data = get("mMatchup")
-    schedule = [s for s in data.get("schedule", []) if s.get("matchupPeriodId") == week]
-    teams = {t["id"]: t for t in data["teams"]}
+    # Pull schedule from mMatchup
+    mm = get("mMatchup")
+    schedule = [s for s in mm.get("schedule", []) if s.get("matchupPeriodId") == week]
+
+    # Build a robust team name map from mTeam (more reliable for names)
+    mt = get("mTeam")
+    team_map = {t["id"]: t for t in mt["teams"]}
+
+    def name_for(tid):
+        t = team_map.get(tid, {})
+        # Try common fields in order
+        for a,b in [("location","nickname"), ("teamLocation","teamNickname")]:
+            loc, nick = t.get(a), t.get(b)
+            if loc or nick:
+                return f"{(loc or '').strip()} {(nick or '').strip()}".strip()
+        return t.get("name") or t.get("abbrev") or f"Team {tid}"
 
     embed = {
       "title": f"Week {week} Matchup Preview",
@@ -27,16 +26,11 @@ def build_preview():
     }
 
     for s in schedule:
-        home = teams.get(s["home"]["teamId"], {})
-        away = teams.get(s["away"]["teamId"], {})
-        home_name = team_display(home)
-        away_name = team_display(away)
+        home_name = name_for(s["home"]["teamId"])
+        away_name = name_for(s["away"]["teamId"])
         embed["fields"].append({"name":"\u200b","value":f"**{home_name}** vs **{away_name}**", "inline": False})
 
     if not embed["fields"]:
         embed["description"] = "_No scheduled matchups found for this week yet_"
 
     return embed
-
-if __name__ == "__main__":
-    send(build_preview())
