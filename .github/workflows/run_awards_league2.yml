@@ -1,0 +1,19 @@
+name: Manual Awards (League 2)
+on: { workflow_dispatch: {} }
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - env:
+          LEAGUE_ID:   ${{ secrets.L2_LEAGUE_ID }}
+          SEASON_ID:   ${{ secrets.L2_SEASON_ID }}
+          ESPN_S2:     ${{ secrets.L2_ESPN_S2 }}
+          SWID:        ${{ secrets.L2_SWID }}
+          WEBHOOK_URL: ${{ secrets.L2_WEBHOOK_URL }}
+          TIMEZONE:    ${{ secrets.L2_TIMEZONE }}
+        run: python weekly_awards.py
