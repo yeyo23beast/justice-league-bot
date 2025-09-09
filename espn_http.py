@@ -20,11 +20,13 @@ def _ctx():
         ],
     }
 
-def get(view: str):
+def get(view: str, params: dict | None = None):
     c = _ctx()
+    q = {"view": view}
+    if params:
+        q.update(params)
     for base in c["bases"]:
-        url = f"{base}?view={view}"
-        r = requests.get(url, headers=c["headers"], cookies=c["cookies"], timeout=20)
+        r = requests.get(base, headers=c["headers"], cookies=c["cookies"], params=q, timeout=20)
         if r.status_code == 200 and "application/json" in r.headers.get("content-type","").lower():
             return r.json()
-    raise RuntimeError(f"ESPN returned non-JSON or non-200 for all endpoints (view={view}).")
+    raise RuntimeError(f"ESPN returned non-JSON or non-200 for all endpoints (view={view}, params={params})")
