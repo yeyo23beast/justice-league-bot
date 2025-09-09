@@ -6,6 +6,7 @@ TZ = os.environ.get("TIMEZONE", "America/Denver")
 
 # Turn this False if anything looks off for your league shape
 COMPUTE_OPTIMAL = True
+DEBUG_PROJ = False  # set True to log projection-source info to Actions
 
 def send(embed):
     requests.post(
@@ -34,7 +35,6 @@ def name_map():
     return id_to_team, name_for
 
 def safe_score(side):
-    # Most reliable team totals
     for k in ("totalPoints", "appliedTotal", "points"):
         v = side.get(k)
         if v is not None:
@@ -42,57 +42,22 @@ def safe_score(side):
     return 0.0
 
 def safe_proj(side):
-    # ESPN sometimes zeroes these after games; we'll fallback to per-player if needed
     for k in ("totalProjectedPointsLive", "totalProjectedPoints", "projectedTotal"):
         v = side.get(k)
         if v is not None:
             return float(v)
     return 0.0
 
-def projected_points_from_entries(side, week):
-    """
-    Sum projected points for *starters* in the given week.
-    1) Try projections already present on matchup roster entries
-    2) If none, fetch mRoster?scoringPeriodId=week and sum projections there
-    """
-    # --- 1) Try from entries already on the matchup payload ---
-    entries = (((side.get("rosterForCurrentScoringPeriod") or {}).get("entries")) or [])
-    found_any, total = _sum_proj_from_entry_list(entries, week)
-    if found_any:
-        return total
-
-    # --- 2) Fallback: fetch mRoster for that week, build playerId->proj map, then sum starters ---
-    try:
-        roster = get("mRoster", params={"scoringPeriodId": week})
-    except TypeError:
-        # If espn_http.get doesn't support params yet, raise a clear hint
-        raise RuntimeError("espn_http.get() must accept params to fetch mRoster with scoringPeriodId")
-
-    proj_by_player = {}
-    for team in roster.get("teams", []):
-        for e in ((team.get("roster") or {}).get("entries") or []):
-            p = (e.get("playerPoolEntry") or {}).get("player", {}) or {}
-            pid = p.get("id")
-            stats = p.get("stats", []) or []
-            proj = 0.0
-            for s in stats:
-                # statSourceId==1 → projected | statSplitTypeId==1 → total
-                if (s.get("scoringPeriodId") == week and s.get("statSourceId") == 1 and s.get("statSplitTypeId") == 1):
-                    proj = float(s.get("appliedTotal") or 0.0)
-                    break
-            if pid is not None:
-                proj_by_player[pid] = proj
-
-    total = 0.0
-    for e in entries:
-        slot = e.get("lineupSlotId")
-        if slot in (20, 21, 23, None):   # bench, IR, taxi
-            continue
-        ppe = e.get("playerPoolEntry") or {}
-        pid = ((ppe.get("player") or {}).get("id"))
-        if pid is not None:
-            total += float(proj_by_player.get(pid, 0.0))
-    return total
+def _ppe_player_id(ppe: dict) -> int | None:
+    """Be liberal in how we pull a player id from playerPoolEntry."""
+    if not ppe:
+        return None
+    # Common locations for the id:
+    return (
+        ppe.get("id") or
+        ppe.get("playerId") or
+        (ppe.get("player") or {}).get("id")
+    )
 
 def _sum_proj_from_entry_list(entry_list, week):
     """Return (found_any, sum) of starter projections from an entry list if stats are already attached."""
@@ -110,6 +75,59 @@ def _sum_proj_from_entry_list(entry_list, week):
                 found_any = True
                 break
     return found_any, total
+
+def projected_points_from_entries(side, week):
+    """
+    Sum projected points for starters for the given week.
+    1) Try projections already present on matchup roster entries
+    2) If none, fetch mRoster?scoringPeriodId=week and sum projections there
+    """
+    entries = (((side.get("rosterForCurrentScoringPeriod") or {}).get("entries")) or [])
+
+    # (1) Try from entries on the matchup payload
+    found_any, total = _sum_proj_from_entry_list(entries, week)
+    if found_any:
+        if DEBUG_PROJ:
+            print(f"[proj] used entries for week={week}: total={total:.2f}")
+        return total
+
+    # (2) Fallback: fetch mRoster for that week, build playerId->proj, sum starters
+    roster = get("mRoster", params={"scoringPeriodId": week})
+    proj_by_player = {}
+    for team in roster.get("teams", []):
+        for e in ((team.get("roster") or {}).get("entries") or []):
+            ppe = e.get("playerPoolEntry") or {}
+            pid = _ppe_player_id(ppe)
+            p = ppe.get("player") or {}
+            stats = p.get("stats", []) or []
+            proj = 0.0
+            for s in stats:
+                # statSourceId==1 → projected | statSplitTypeId==1 → total
+                if (s.get("scoringPeriodId") == week and s.get("statSourceId") == 1 and s.get("statSplitTypeId") == 1):
+                    proj = float(s.get("appliedTotal") or 0.0)
+                    break
+            if pid is not None:
+                proj_by_player[pid] = proj
+
+    total = 0.0
+    starters_count = 0
+    matched = 0
+    for e in entries:
+        slot = e.get("lineupSlotId")
+        if slot in (20, 21, 23, None):   # bench/IR/taxi
+            continue
+        starters_count += 1
+        ppe = e.get("playerPoolEntry") or {}
+        pid = _ppe_player_id(ppe)
+        if pid is not None:
+            total += float(proj_by_player.get(pid, 0.0))
+            if pid in proj_by_player:
+                matched += 1
+
+    if DEBUG_PROJ:
+        print(f"[proj] used mRoster fallback week={week}: starters={starters_count} matched={matched} total={total:.2f}")
+
+    return total
 
 def collect_entries_points(side):
     """
@@ -217,7 +235,7 @@ def build_awards_embed():
     blow = max(match_results, key=lambda x: x[2]) if match_results else None
     close= min(match_results, key=lambda x: x[2]) if match_results else None
 
-    # Over/Under (actual - projection), but also keep actual/proj for display
+    # Over/Under (actual - projection) and keep actual/proj for display
     diffs = [(t["tid"],
               float(t.get("score",0.0)) - float(t.get("proj",0.0)),
               float(t.get("score",0.0)),
