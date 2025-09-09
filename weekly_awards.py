@@ -34,7 +34,6 @@ def name_map():
     return id_to_team, name_for
 
 def safe_score(side):
-    # ESPN uses a few keys; read the first available
     for k in ("totalPoints", "appliedTotal", "points"):
         v = side.get(k)
         if v is not None:
@@ -42,31 +41,39 @@ def safe_score(side):
     return 0.0
 
 def safe_proj(side):
-    # Use live projected first if present; fall back to static projection
     for k in ("totalProjectedPointsLive", "totalProjectedPoints", "projectedTotal"):
         v = side.get(k)
         if v is not None:
             return float(v)
     return 0.0
 
+def projected_points_from_entries(side, week):
+    entries = (((side.get("rosterForCurrentScoringPeriod") or {}).get("entries")) or [])
+    total = 0.0
+    for e in entries:
+        slot = e.get("lineupSlotId")
+        if slot in (20, 21, 23, None):  # bench, IR, taxi
+            continue
+        ppe = e.get("playerPoolEntry") or {}
+        stats = (ppe.get("player", {}) or {}).get("stats", []) or []
+        for s in stats:
+            if (s.get("scoringPeriodId") == week and 
+                s.get("statSourceId") == 1 and 
+                s.get("statSplitTypeId") == 1):
+                total += float(s.get("appliedTotal") or 0.0)
+                break
+    return total
+
 def collect_entries_points(side):
-    """
-    Returns (num_starters, actual_points, all_points_list)
-    all_points_list = list of per-player points (float) for all entries (starters + bench)
-    We mark starters using lineupSlotId != 20 (bench), != 21 (IR), != 23 (TAXI), etc.
-    """
     entries = (((side.get("rosterForCurrentScoringPeriod") or {}).get("entries")) or [])
     pts_all = []
     starters_pts = []
     starters_count = 0
     for e in entries:
-        # entry like: { "lineupSlotId": 2, "playerPoolEntry": { "appliedStatTotal": 12.3, ... } }
         slot = e.get("lineupSlotId")
         ppe = e.get("playerPoolEntry") or {}
-        # ESPN sometimes nests inside an "player" object; appliedStatTotal is most consistent
         pts = ppe.get("appliedStatTotal")
         if pts is None:
-            # Try other shapes (rare)
             stats = ppe.get("player", {}).get("stats", [])
             pts = 0.0
             for s in stats or []:
@@ -75,7 +82,6 @@ def collect_entries_points(side):
         pts = float(pts or 0.0)
         pts_all.append(pts)
 
-        # Starter heuristic: exclude bench(20), IR(21), TAXI(23) if present
         if slot not in (20, 21, 23, None):
             starters_count += 1
             starters_pts.append(pts)
@@ -83,21 +89,18 @@ def collect_entries_points(side):
     return starters_count, sum(starters_pts), pts_all
 
 def build_awards_embed():
-    # Recap prior week
     week = max(1, current_week() - 1)
     mm = get("mMatchup")
     schedule = [s for s in mm.get("schedule", []) if s.get("matchupPeriodId") == week]
     id_to_team, name_for = name_map()
 
-    # Gather per-team stats
-    # Each element: {tid, score, proj, actual_optimal (optional), optimal (optional)}
     team_week = {}
 
     def ensure_team(tid):
         if tid not in team_week:
             team_week[tid] = {"tid": tid, "score": 0.0, "proj": 0.0}
 
-    match_results = []  # (winnerId, loserId, margin)
+    match_results = []
 
     for s in schedule:
         h_id = s["home"]["teamId"]; a_id = s["away"]["teamId"]
@@ -107,27 +110,28 @@ def build_awards_embed():
         h_pts = safe_score(h_side); a_pts = safe_score(a_side)
         h_proj = safe_proj(h_side);  a_proj = safe_proj(a_side)
 
+        if h_proj == 0:
+            h_proj = projected_points_from_entries(h_side, week)
+        if a_proj == 0:
+            a_proj = projected_points_from_entries(a_side, week)
+
         team_week[h_id]["score"] = h_pts
         team_week[a_id]["score"] = a_pts
         team_week[h_id]["proj"]  = h_proj
         team_week[a_id]["proj"]  = a_proj
 
-        # Winner/loser for blowout/close + all-play mappings
         if h_pts != a_pts:
             if h_pts > a_pts:
                 match_results.append((h_id, a_id, h_pts - a_pts))
             else:
                 match_results.append((a_id, h_id, a_pts - h_pts))
 
-        # Optional: Best/Worst manager approximation
         if COMPUTE_OPTIMAL:
             try:
                 h_starters, h_actual, h_all = collect_entries_points(h_side)
                 a_starters, a_actual, a_all = collect_entries_points(a_side)
 
                 def optimal_sum(all_pts, starters):
-                    # position-agnostic: take top N points from all entries
-                    # (good approximation; avoids needing per-slot constraints)
                     if starters <= 0:
                         return sum(sorted(all_pts, reverse=True)[:max(1, len(all_pts))])
                     return sum(sorted(all_pts, reverse=True)[:starters])
@@ -141,10 +145,8 @@ def build_awards_embed():
                     team_week[a_id]["actual_lineup"] = a_actual
                     team_week[a_id]["optimal_lineup"] = a_opt
             except Exception:
-                # If anything odd in JSON, just skip optimal calc silently
                 pass
 
-    # Early-week guard: if nobody has any points yet, post friendly note
     if not team_week or (max(t["score"] for t in team_week.values()) == 0.0 and
                          min(t["score"] for t in team_week.values()) == 0.0):
         return {
@@ -154,27 +156,20 @@ def build_awards_embed():
           "fields": []
         }
 
-    # === High/Low ===
     high = max(team_week.values(), key=lambda x: x["score"])
     low  = min(team_week.values(), key=lambda x: x["score"])
-
-    # === Blowout / Close ===
     blow = max(match_results, key=lambda x: x[2]) if match_results else None
     close= min(match_results, key=lambda x: x[2]) if match_results else None
 
-    # === Over/Underachiever (actual - projection) ===
-    diffs = [(t["tid"], float(t.get("score",0.0)) - float(t.get("proj",0.0))) for t in team_week.values()]
+    diffs = [(t["tid"], float(t.get("score",0.0)) - float(t.get("proj",0.0)), t.get("score",0.0), t.get("proj",0.0)) for t in team_week.values()]
     over  = max(diffs, key=lambda x: x[1]) if diffs else None
     under = min(diffs, key=lambda x: x[1]) if diffs else None
 
-    # === All-play Lucky/Unlucky ===
-    # Rank by score (descending). all-play wins = number of teams you outscored.
     scores = sorted([(t["tid"], t["score"]) for t in team_week.values()], key=lambda x: x[1], reverse=True)
     n = len(scores)
     tid_to_idx = {tid:i for i,(tid,_) in enumerate(scores)}
     allplay_wins = {tid: (n - 1 - tid_to_idx[tid]) for tid,_ in scores}
 
-    # Real win/loss from match_results
     real_wins = {tid: 0 for tid in team_week}
     for w,l,_ in match_results:
         real_wins[w] = 1
@@ -186,7 +181,6 @@ def build_awards_embed():
     lucky   = min(lucky_candidates, key=lambda x: x[1]) if lucky_candidates else None
     unlucky = max(unlucky_candidates, key=lambda x: x[1]) if unlucky_candidates else None
 
-    # === Best/Worst Manager (approximation) ===
     mgr_list = []
     for tid, data in team_week.items():
         actual = data.get("actual_lineup")
@@ -199,7 +193,6 @@ def build_awards_embed():
     best_mgr = max(mgr_list, key=lambda x: x[1]) if mgr_list else None
     worst_mgr= min(mgr_list, key=lambda x: x[1]) if mgr_list else None
 
-    # === Build Embed ===
     embed = {
       "title": f"Trophies of the Week — Week {week}",
       "description": "Justice League Fantasy Football",
@@ -208,17 +201,14 @@ def build_awards_embed():
       "footer": {"text": f"Generated {datetime.datetime.now(pytz.timezone(TZ)).strftime('%Y-%m-%d %H:%M %Z')}"}
     }
 
-    # High/Low
     embed["fields"].append({"name":"👑 High score 👑", "value": f"{name_for(high['tid'])} with {high['score']:.2f} points", "inline": False})
     embed["fields"].append({"name":"💩 Low score 💩",  "value": f"{name_for(low['tid'])} with {low['score']:.2f} points",  "inline": False})
 
-    # Blowout/Close
     if blow:
         embed["fields"].append({"name":"😱 Blow out 😱", "value": f"{name_for(blow[0])} blew out {name_for(blow[1])} by {blow[2]:.2f} points", "inline": False})
     if close:
         embed["fields"].append({"name":"😅 Close win 😅", "value": f"{name_for(close[0])} barely beat {name_for(close[1])} by {close[2]:.2f} points", "inline": False})
 
-    # Lucky/Unlucky
     if lucky:
         lw = allplay_wins[lucky[0]]
         embed["fields"].append({"name":"🍀 Lucky 🍀", "value": f"{name_for(lucky[0])} was {lw}-{(n-1-lw)} in all-play but still got the W", "inline": False})
@@ -226,13 +216,19 @@ def build_awards_embed():
         uw = allplay_wins[unlucky[0]]
         embed["fields"].append({"name":"😡 Unlucky 😡", "value": f"{name_for(unlucky[0])} was {uw}-{(n-1-uw)} in all-play but still took the L", "inline": False})
 
-    # Over/Under
     if over:
-        embed["fields"].append({"name":"📈 Overachiever 📈", "value": f"{name_for(over[0])} was {over[1]:.2f} points over projection", "inline": False})
+        embed["fields"].append({
+            "name":"📈 Overachiever 📈",
+            "value": f"{name_for(over[0])} scored {over[2]:.2f} vs {over[3]:.2f} projected (+{over[1]:.2f})",
+            "inline": False
+        })
     if under:
-        embed["fields"].append({"name":"📉 Underachiever 📉", "value": f"{name_for(under[0])} was {under[1]:.2f} points under projection", "inline": False})
+        embed["fields"].append({
+            "name":"📉 Underachiever 📉",
+            "value": f"{name_for(under[0])} scored {under[2]:.2f} vs {under[3]:.2f} projected ({under[1]:.2f})",
+            "inline": False
+        })
 
-    # Best/Worst Manager
     if best_mgr:
         pct = min(100.0, best_mgr[1])
         embed["fields"].append({"name":"🤖 Best Manager 🤖", "value": f"{name_for(best_mgr[0])} scored {pct:.2f}% of optimal", "inline": False})
