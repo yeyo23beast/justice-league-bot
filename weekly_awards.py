@@ -1,5 +1,5 @@
 import os, requests, datetime, pytz
-from espn_http import get  # uses the working headers + reads host
+from espn_http import get  # must support: get(view, params=dict)
 
 WEBHOOK_URL = os.environ["WEBHOOK_URL"]
 TZ = os.environ.get("TIMEZONE", "America/Denver")
@@ -48,85 +48,40 @@ def safe_proj(side):
             return float(v)
     return 0.0
 
-def _ppe_player_id(ppe: dict) -> int | None:
-    """Be liberal in how we pull a player id from playerPoolEntry."""
-    if not ppe:
-        return None
-    # Common locations for the id:
-    return (
-        ppe.get("id") or
-        ppe.get("playerId") or
-        (ppe.get("player") or {}).get("id")
-    )
-
-def _sum_proj_from_entry_list(entry_list, week):
-    """Return (found_any, sum) of starter projections from an entry list if stats are already attached."""
-    total = 0.0
-    found_any = False
-    for e in entry_list:
-        slot = e.get("lineupSlotId")
-        if slot in (20, 21, 23, None):  # bench/IR/taxi
-            continue
-        ppe = e.get("playerPoolEntry") or {}
-        stats = (ppe.get("player", {}) or {}).get("stats", []) or []
-        for s in stats:
-            if (s.get("scoringPeriodId") == week and s.get("statSourceId") == 1 and s.get("statSplitTypeId") == 1):
-                total += float(s.get("appliedTotal") or 0.0)
-                found_any = True
-                break
-    return found_any, total
-
-def projected_points_from_entries(side, week):
+def projected_points_for_team(team_id: int, week: int) -> float:
     """
-    Sum projected points for starters for the given week.
-    1) Try projections already present on matchup roster entries
-    2) If none, fetch mRoster?scoringPeriodId=week and sum projections there
+    Sum projected points for that team's *starters* for the given week,
+    using mRoster?scoringPeriodId=<week>. This avoids any player-id
+    cross-referencing between views.
     """
-    entries = (((side.get("rosterForCurrentScoringPeriod") or {}).get("entries")) or [])
-
-    # (1) Try from entries on the matchup payload
-    found_any, total = _sum_proj_from_entry_list(entries, week)
-    if found_any:
-        if DEBUG_PROJ:
-            print(f"[proj] used entries for week={week}: total={total:.2f}")
-        return total
-
-    # (2) Fallback: fetch mRoster for that week, build playerId->proj, sum starters
     roster = get("mRoster", params={"scoringPeriodId": week})
-    proj_by_player = {}
-    for team in roster.get("teams", []):
-        for e in ((team.get("roster") or {}).get("entries") or []):
-            ppe = e.get("playerPoolEntry") or {}
-            pid = _ppe_player_id(ppe)
-            p = ppe.get("player") or {}
-            stats = p.get("stats", []) or []
-            proj = 0.0
-            for s in stats:
-                # statSourceId==1 → projected | statSplitTypeId==1 → total
-                if (s.get("scoringPeriodId") == week and s.get("statSourceId") == 1 and s.get("statSplitTypeId") == 1):
-                    proj = float(s.get("appliedTotal") or 0.0)
-                    break
-            if pid is not None:
-                proj_by_player[pid] = proj
+    team = next((t for t in roster.get("teams", []) if t.get("id") == team_id), None)
+    if not team:
+        if DEBUG_PROJ: print(f"[proj] team {team_id} not found in mRoster for week={week}")
+        return 0.0
 
+    entries = ((team.get("roster") or {}).get("entries")) or []
     total = 0.0
-    starters_count = 0
-    matched = 0
+    starters = 0
     for e in entries:
         slot = e.get("lineupSlotId")
-        if slot in (20, 21, 23, None):   # bench/IR/taxi
+        # exclude bench(20), IR(21), taxi(23)
+        if slot in (20, 21, 23, None):
             continue
-        starters_count += 1
+        starters += 1
         ppe = e.get("playerPoolEntry") or {}
-        pid = _ppe_player_id(ppe)
-        if pid is not None:
-            total += float(proj_by_player.get(pid, 0.0))
-            if pid in proj_by_player:
-                matched += 1
+        p = ppe.get("player") or {}
+        stats = p.get("stats", []) or []
+        proj = 0.0
+        for s in stats:
+            # Projections: statSourceId==1 (proj), statSplitTypeId==1 (total), for that week
+            if (s.get("scoringPeriodId") == week and s.get("statSourceId") == 1 and s.get("statSplitTypeId") == 1):
+                proj = float(s.get("appliedTotal") or 0.0)
+                break
+        total += proj
 
     if DEBUG_PROJ:
-        print(f"[proj] used mRoster fallback week={week}: starters={starters_count} matched={matched} total={total:.2f}")
-
+        print(f"[proj] mRoster team={team_id} week={week} starters={starters} total_proj={total:.2f}")
     return total
 
 def collect_entries_points(side):
@@ -179,11 +134,11 @@ def build_awards_embed():
         h_pts = safe_score(h_side); a_pts = safe_score(a_side)
         h_proj = safe_proj(h_side);  a_proj = safe_proj(a_side)
 
-        # Fallback to player-sum projections if side-level is zero
+        # Fallback to roster-based projections per team if side-level is zero
         if h_proj == 0:
-            h_proj = projected_points_from_entries(h_side, week)
+            h_proj = projected_points_for_team(h_id, week)
         if a_proj == 0:
-            a_proj = projected_points_from_entries(a_side, week)
+            a_proj = projected_points_for_team(a_id, week)
 
         team_week[h_id]["score"] = h_pts
         team_week[a_id]["score"] = a_pts
@@ -217,7 +172,7 @@ def build_awards_embed():
             except Exception:
                 pass
 
-    # If nothing scored (preseason / very early), bail politely
+    # If nothing scored, bail politely
     if not team_week or (max(t["score"] for t in team_week.values()) == 0.0 and
                          min(t["score"] for t in team_week.values()) == 0.0):
         return {
@@ -302,7 +257,7 @@ def build_awards_embed():
         uw = allplay_wins[unlucky[0]]
         embed["fields"].append({"name":"😡 Unlucky 😡", "value": f"{name_for(unlucky[0])} was {uw}-{(n-1-uw)} in all-play but still took the L", "inline": False})
 
-    # Over/Under with full numbers
+    # Over/Under with actual + projected numbers
     if over:
         embed["fields"].append({
             "name":"📈 Overachiever 📈",
