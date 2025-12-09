@@ -1,7 +1,7 @@
 name: Weekly Fantasy Posts
 on:
   schedule:
-    - cron: "0 14 * * 2"   # Tue 10:00 MDT — Awards + Power
+    - cron: "0 16 * * 2"   # Tue 10:00 MDT — Awards + Power Rankings by PF
     - cron: "0 22 * * 4"   # Thu  4:00 MDT — Preview
   workflow_dispatch: {}
 
