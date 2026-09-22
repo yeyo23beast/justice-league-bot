@@ -1,9 +1,16 @@
 name: Weekly Fantasy Posts
+
 on:
   schedule:
-    - cron: "0 16 * * 2"   # Tue 10:00 MDT — Awards + Power Rankings by PF
-    - cron: "0 22 * * 4"   # Thu  4:00 MDT — Preview
-  workflow_dispatch: {}
+    - cron: "0 16 * * 2"   # Tuesday 16:00 UTC — Awards + Power Rankings
+    - cron: "0 22 * * 4"   # Thursday 22:00 UTC — Matchup Preview
+  workflow_dispatch:
+    inputs:
+      run_preview:
+        description: "Also post the matchup preview now"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   post:
@@ -16,7 +23,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Tuesday (Awards + Power)
-        if: ${{ github.event.schedule == '0 16 * * 2' || github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event.schedule == '0 16 * * 2' || (github.event_name == 'workflow_dispatch' && inputs.run_preview != true) }}
         env:
           LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
           SEASON_ID: ${{ secrets.SEASON_ID }}
@@ -29,7 +36,7 @@ jobs:
           python weekly_power.py
 
       - name: Thursday (Preview)
-        if: ${{ github.event.schedule == '0 22 * * 4' }}
+        if: ${{ github.event.schedule == '0 22 * * 4' || (github.event_name == 'workflow_dispatch' && inputs.run_preview == true) }}
         env:
           LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
           SEASON_ID: ${{ secrets.SEASON_ID }}
