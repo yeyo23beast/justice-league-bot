@@ -9,10 +9,9 @@ def send(embed):
     requests.post(WEBHOOK_URL, json={"username":"Justice League Bot","embeds":[embed]}, timeout=20).raise_for_status()
 
 def build_power():
-    data = get("mTeam")  # Teams + records
+    data = get("mTeam")
     teams = data["teams"]
 
-    # Some shapes use record.overall.pointsFor; keep a safe getter:
     def points_for(t):
         try:
             return float(t["record"]["overall"]["pointsFor"])
@@ -23,7 +22,13 @@ def build_power():
         r = t.get("record", {}).get("overall", {})
         return int(r.get("wins", 0)), int(r.get("losses", 0)), int(r.get("ties", 0))
 
-    teams_sorted = sorted(teams, key=lambda tt: -points_for(tt))
+    def ranking_key(t):
+        wins, losses, ties = rec_tuple(t)
+        games = wins + losses + ties
+        win_pct = (wins + 0.5 * ties) / games if games else 0.0
+        return (-win_pct, -points_for(t), team_display(t).casefold())
+
+    teams_sorted = sorted(teams, key=ranking_key)
 
     lines = []
     for i, t in enumerate(teams_sorted, start=1):
@@ -38,6 +43,10 @@ def build_power():
       "color": 0xFFD166,
       "footer": {"text": f"ESPN League {data.get('id','?')} • {datetime.datetime.now(pytz.timezone(TZ)).strftime('%Y-%m-%d %H:%M %Z')}"}
     }
+    return embed
+
+if __name__ == "__main__":
+    send(build_power())
     return embed
 
 if __name__ == "__main__":
