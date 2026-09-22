@@ -1,10 +1,16 @@
-name: Weekly Fantasy Posts (League 2)
+name: Weekly Fantasy Posts
 
 on:
   schedule:
-    - cron: "0 16 * * 2"   # Tue 10:00 MDT — Awards + Power for League 2
-    - cron: "0 22 * * 4"   # Thu  4:00 MDT — Preview for League 2
-  workflow_dispatch: {}
+    - cron: "0 16 * * 2"   # Tuesday 16:00 UTC — Awards + Power Rankings
+    - cron: "0 22 * * 4"   # Thursday 22:00 UTC — Matchup Preview
+  workflow_dispatch:
+    inputs:
+      run_preview:
+        description: "Also post the matchup preview now"
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   post:
@@ -16,28 +22,26 @@ jobs:
           python-version: "3.11"
       - run: pip install -r requirements.txt
 
-      # TUESDAY: Awards + Power for League 2
       - name: Tuesday (Awards + Power)
-        if: ${{ github.event.schedule == '0 16 * * 2' || github.event_name == 'workflow_dispatch' }}
+        if: ${{ github.event.schedule == '0 16 * * 2' || (github.event_name == 'workflow_dispatch' && inputs.run_preview != true) }}
         env:
-          LEAGUE_ID:   ${{ secrets.L2_LEAGUE_ID }}
-          SEASON_ID:   ${{ secrets.L2_SEASON_ID }}
-          ESPN_S2:     ${{ secrets.L2_ESPN_S2 }}
-          SWID:        ${{ secrets.L2_SWID }}
-          WEBHOOK_URL: ${{ secrets.L2_WEBHOOK_URL }}
-          TIMEZONE:    ${{ secrets.L2_TIMEZONE }}
+          LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
+          SEASON_ID: ${{ secrets.SEASON_ID }}
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          SWID: ${{ secrets.SWID }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          TIMEZONE: ${{ secrets.TIMEZONE }}
         run: |
           python weekly_awards.py
           python weekly_power.py
 
-      # THURSDAY: Preview for League 2
       - name: Thursday (Preview)
-        if: ${{ github.event.schedule == '0 22 * * 4' }}
+        if: ${{ github.event.schedule == '0 22 * * 4' || (github.event_name == 'workflow_dispatch' && inputs.run_preview == true) }}
         env:
-          LEAGUE_ID:   ${{ secrets.L2_LEAGUE_ID }}
-          SEASON_ID:   ${{ secrets.L2_SEASON_ID }}
-          ESPN_S2:     ${{ secrets.L2_ESPN_S2 }}
-          SWID:        ${{ secrets.L2_SWID }}
-          WEBHOOK_URL: ${{ secrets.L2_WEBHOOK_URL }}
-          TIMEZONE:    ${{ secrets.L2_TIMEZONE }}
+          LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
+          SEASON_ID: ${{ secrets.SEASON_ID }}
+          ESPN_S2: ${{ secrets.ESPN_S2 }}
+          SWID: ${{ secrets.SWID }}
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+          TIMEZONE: ${{ secrets.TIMEZONE }}
         run: python weekly_preview.py
