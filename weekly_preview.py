@@ -4,9 +4,10 @@ from team_utils import team_display
 
 WEBHOOK_URL = os.environ["WEBHOOK_URL"]
 TZ = os.environ.get("TIMEZONE", "America/Denver")
+BOT_NAME = os.environ.get("BOT_NAME", "Justice League Bot")
 
 def send(embed):
-    requests.post(WEBHOOK_URL, json={"username":"Justice League Bot","embeds":[embed]}, timeout=20).raise_for_status()
+    requests.post(WEBHOOK_URL, json={"username": BOT_NAME, "embeds": [embed]}, timeout=20).raise_for_status()
 
 def current_week():
     data = get("mSettings")
@@ -48,3 +49,6 @@ def build_preview():
         embed["description"] = "_No scheduled matchups found for this week yet_"
 
     return embed
+
+if __name__ == "__main__":
+    send(build_preview())
