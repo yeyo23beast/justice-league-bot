@@ -278,6 +278,4 @@ def build_awards_embed():
     return embed
 
 if __name__ == "__main__":
-    embed = build_awards_embed()
-    send(embed)
-    print("Posted to Discord:", embed.get("title"))
+    send(build_power())
