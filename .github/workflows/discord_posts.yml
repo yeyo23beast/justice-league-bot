@@ -2,8 +2,8 @@ name: Weekly Fantasy Posts
 
 on:
   schedule:
-    - cron: "0 16 * * 2"   # Tuesday 16:00 UTC — Awards + Power Rankings
-    - cron: "0 22 * * 4"   # Thursday 22:00 UTC — Matchup Preview
+    - cron: "5 15 * * 2"   # Tuesday 16:00 UTC — Awards + Power Rankings
+    # - cron: "0 22 * * 4"   # Thursday 22:00 UTC — Matchup Preview
   workflow_dispatch:
     inputs:
       run_preview:
@@ -23,7 +23,7 @@ jobs:
       - run: pip install -r requirements.txt
 
       - name: Tuesday (Awards + Power)
-        if: ${{ github.event.schedule == '0 16 * * 2' || (github.event_name == 'workflow_dispatch' && inputs.run_preview != true) }}
+        if: ${{ github.event.schedule == '5 15 * * 2' || (github.event_name == 'workflow_dispatch' && inputs.run_preview != true) }}
         env:
           LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
           SEASON_ID: ${{ secrets.SEASON_ID }}
@@ -35,13 +35,13 @@ jobs:
           python weekly_awards.py
           python weekly_power.py
 
-      - name: Thursday (Preview)
-        if: ${{ github.event.schedule == '0 22 * * 4' || (github.event_name == 'workflow_dispatch' && inputs.run_preview == true) }}
-        env:
-          LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
-          SEASON_ID: ${{ secrets.SEASON_ID }}
-          ESPN_S2: ${{ secrets.ESPN_S2 }}
-          SWID: ${{ secrets.SWID }}
-          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
-          TIMEZONE: ${{ secrets.TIMEZONE }}
-        run: python weekly_preview.py
+      # - name: Thursday (Preview)
+      #   if: ${{ github.event.schedule == '0 22 * * 4' || (github.event_name == 'workflow_dispatch' && inputs.run_preview == true) }}
+      #   env:
+      #     LEAGUE_ID: ${{ secrets.LEAGUE_ID }}
+      #     SEASON_ID: ${{ secrets.SEASON_ID }}
+      #     ESPN_S2: ${{ secrets.ESPN_S2 }}
+      #     SWID: ${{ secrets.SWID }}
+      #     WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+      #     TIMEZONE: ${{ secrets.TIMEZONE }}
+      #   run: python weekly_preview.py
